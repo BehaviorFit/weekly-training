@@ -137,6 +137,31 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 @media(max-width:1100px){.day-grid{grid-template-columns:repeat(4,1fr);}}
 @media(max-width:800px){.day-grid{grid-template-columns:repeat(2,1fr);}.wod-legend{grid-template-columns:1fr;}.charts-grid{grid-template-columns:1fr;}.prog-notes-grid{grid-template-columns:1fr;}}
 @media(max-width:480px){.day-grid{grid-template-columns:1fr;}.week-panel{padding:14px;}}
+.sync-btn{background:rgba(255,255,255,.07);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s;white-space:nowrap;}
+.sync-btn:hover{background:rgba(255,255,255,.12);}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#50fa7b;color:#0a0a1a;padding:10px 22px;border-radius:24px;font-weight:700;font-size:13px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.4);pointer-events:none;animation:fadeUp .25s ease;}
+@keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(8px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+/* LIFT LOGGER */
+.lift-log-btn{background:none;border:none;cursor:pointer;font-size:9px;font-weight:700;color:var(--accent2);opacity:0;padding:1px 5px;border-radius:3px;transition:opacity .15s;white-space:nowrap;vertical-align:middle;letter-spacing:.3px;}
+.check-row:hover .lift-log-btn{opacity:1;}
+.lift-editor{background:rgba(74,158,255,.06);border:1px solid rgba(74,158,255,.2);border-radius:6px;padding:8px 10px;margin:4px 0 6px 22px;}
+.lift-editor-title{font-size:10px;font-weight:700;color:var(--accent2);margin-bottom:6px;}
+.set-rows{display:flex;flex-direction:column;gap:4px;}
+.set-row{display:flex;align-items:center;gap:6px;}
+.set-num{font-size:10px;color:var(--muted);min-width:32px;}
+.set-input{background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:3px 6px;font-size:12px;width:52px;text-align:center;}
+.set-input:focus{outline:1px solid var(--accent2);border-color:var(--accent2);}
+.set-lbl{font-size:10px;color:var(--muted);}
+.set-del{background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0 2px;}
+.set-del:hover{color:var(--accent);}
+.lift-editor-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
+.add-set-btn{background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer;}
+.add-set-btn:hover{background:rgba(255,255,255,.1);color:var(--text);}
+.log-note-input{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:3px 8px;font-size:11px;width:100%;margin-top:6px;}
+.lift-logged-badge{font-size:9px;font-weight:700;color:var(--accent3);background:rgba(80,250,123,.1);border:1px solid rgba(80,250,123,.2);border-radius:4px;padding:1px 5px;margin-left:4px;vertical-align:middle;}
+.drive-save-btn{background:rgba(80,250,123,.1);border:1px solid rgba(80,250,123,.3);color:var(--accent3);padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;transition:background .15s;}
+.drive-save-btn:hover{background:rgba(80,250,123,.2);}
+
 </style>
 </head>
 <body>
@@ -157,6 +182,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
   <span class="global-label">Block Progress</span>
   <div class="global-track"><div class="global-fill" id="globalFill" style="width:0%"></div></div>
   <span class="global-pct" id="globalPct">0 / 0</span>
+  <button class="sync-btn" onclick="exportProgress()" title="Copy progress code to clipboard">📋 Copy Progress</button>
+  <button class="drive-save-btn" onclick="saveWeekToDrive()" title="Save this week's actual lift data to Google Drive">💾 Save to Drive</button>
+  <button class="sync-btn" onclick="importProgress()" title="Paste a progress code to restore">📥 Load Progress</button>
 </div>
 
 <div class="legend-row">
@@ -443,7 +471,9 @@ function buildPanel(wk,wi,checked,total){
       <div class="check-list" data-wi="${wi}">${d.items.map((item,ii)=>{
         const k=itemKey(wk.id,di,ii);
         const done=isChecked(k)?' done':'';
-        return`<div class="check-row${done}" draggable="true" data-key="${k}" data-wi="${wi}"><span class="item-handle">⠿</span><div class="check-box"></div><span class="check-lbl">${item}</span></div>`;
+        const parsed=parseLiftItem(item);
+        const logBtn=parsed?`<button class="lift-log-btn" onclick="event.stopPropagation();toggleLiftEditor('${k}',${JSON.stringify(parsed)},${wk.id},${wi+1})">LOG</button>`:'';
+        return`<div class="check-row${done}" draggable="true" data-key="${k}" data-wi="${wi}"><span class="item-handle">⠿</span><div class="check-box"></div><span class="check-lbl">${item}</span>${logBtn}</div>`;
       }).join('')}</div>
     </div>`).join('')}</div>`;
   return`<div class="week-header"><div class="week-title">${wk.label}: ${wk.theme}</div>
@@ -582,8 +612,230 @@ function buildCharts(){
   });
 }
 
+
+// ── LIFT LOGGER ───────────────────────────────────────────────────────────────
+// Exercises to detect in item text (match against Fire Lifting Data Component names)
+const LIFT_EXERCISES = [
+  {re:/back squat/i, name:'Back Squat'},
+  {re:/bench press/i, name:'Bench Press'},
+  {re:/deadlift|romanian dl/i, name:'Deadlift'},
+  {re:/snatch/i, name:'Snatch'},
+  {re:/clean and jerk|c&j|clean & jerk/i, name:'Clean and Jerk'},
+  {re:/front squat/i, name:'Front Squat'},
+  {re:/overhead press|ohp/i, name:'Overhead Press'},
+  {re:/weighted pull-up/i, name:'Weighted Pull-up'},
+];
+
+// Parse a lift item string → {exercise, sets, reps, weight} or null
+function parseLiftItem(text){
+  for(const ex of LIFT_EXERCISES){
+    if(ex.re.test(text)){
+      const m = text.match(/(\d+)×(\d+)\s*@\s*(\d+)/);
+      return {
+        exercise: ex.name,
+        sets: m ? parseInt(m[1]) : 1,
+        reps: m ? parseInt(m[2]) : null,
+        weight: m ? parseInt(m[3]) : null
+      };
+    }
+  }
+  return null;
+}
+
+// Render a lift editor for a given check-row key
+function toggleLiftEditor(key, parsed, wk, weekNo){
+  const existing = document.getElementById('le-'+key);
+  if(existing){existing.remove();return;}
+
+  const row = document.querySelector('.check-row[data-key="'+key+'"]');
+  if(!row) return;
+
+  // Load saved actuals or use prescribed
+  const savedRaw = localStorage.getItem('bf-lift-'+key);
+  const saved = savedRaw ? JSON.parse(savedRaw) : null;
+  const sets = saved ? saved.sets : Array.from({length:parsed.sets},(_,i)=>({s:i+1,r:parsed.reps,w:parsed.weight}));
+
+  const editor = document.createElement('div');
+  editor.className = 'lift-editor';
+  editor.id = 'le-'+key;
+  editor.innerHTML = `
+    <div class="lift-editor-title">${parsed.exercise} — Log Actual Sets</div>
+    <div class="set-rows" id="sr-${key}">
+      ${sets.map((s,i)=>`
+        <div class="set-row" id="srow-${key}-${i}">
+          <span class="set-num">Set ${s.s}</span>
+          <input class="set-input" type="number" id="r-${key}-${i}" value="${s.r||''}" placeholder="reps" min="0" max="99">
+          <span class="set-lbl">reps @</span>
+          <input class="set-input" type="number" id="w-${key}-${i}" value="${s.w||''}" placeholder="lbs" min="0" max="999">
+          <span class="set-lbl">lbs</span>
+          <button class="set-del" onclick="delSet('${key}',${i})">✕</button>
+        </div>`).join('')}
+    </div>
+    <div class="lift-editor-actions">
+      <button class="add-set-btn" onclick="addSet('${key}','${parsed.exercise}',${sets.length})">+ Set</button>
+      <button class="add-set-btn" onclick="saveLiftLocal('${key}','${parsed.exercise}',${weekNo})">✓ Save Locally</button>
+    </div>
+    <input class="log-note-input" id="note-${key}" placeholder="Notes (variation, RPE, etc.)" value="${saved?saved.note||'':''}">
+  `;
+  row.after(editor);
+}
+
+function addSet(key, exercise, count){
+  const container = document.getElementById('sr-'+key);
+  if(!container) return;
+  const i = count;
+  const div = document.createElement('div');
+  div.className='set-row'; div.id='srow-'+key+'-'+i;
+  div.innerHTML=`<span class="set-num">Set ${i+1}</span>
+    <input class="set-input" type="number" id="r-${key}-${i}" placeholder="reps" min="0" max="99">
+    <span class="set-lbl">reps @</span>
+    <input class="set-input" type="number" id="w-${key}-${i}" placeholder="lbs" min="0" max="999">
+    <span class="set-lbl">lbs</span>
+    <button class="set-del" onclick="this.closest('.set-row').remove()">✕</button>`;
+  container.appendChild(div);
+}
+
+function delSet(key, i){
+  const row = document.getElementById('srow-'+key+'-'+i);
+  if(row) row.remove();
+}
+
+function readSets(key){
+  const sets=[];
+  let i=0;
+  while(true){
+    const r=document.getElementById('r-'+key+'-'+i);
+    const w=document.getElementById('w-'+key+'-'+i);
+    if(!r&&!w) break;
+    if(r&&w) sets.push({s:i+1, r:parseInt(r.value)||0, w:parseInt(w.value)||0});
+    i++;
+  }
+  return sets;
+}
+
+function saveLiftLocal(key, exercise, weekNo){
+  const sets = readSets(key);
+  const note = (document.getElementById('note-'+key)||{}).value||'';
+  const data = {exercise, weekNo, sets, note, date:new Date().toLocaleDateString('en-US')};
+  localStorage.setItem('bf-lift-'+key, JSON.stringify(data));
+  // Show badge on the check-row
+  const row = document.querySelector('.check-row[data-key="'+key+'"]');
+  if(row&&!row.querySelector('.lift-logged-badge')){
+    const lbl = row.querySelector('.check-lbl');
+    if(lbl) lbl.insertAdjacentHTML('afterend','<span class="lift-logged-badge">✓ Logged</span>');
+  }
+  showToast('✓ Saved locally — click 💾 Save to Drive to sync');
+}
+
+function getAllLiftLogs(){
+  const logs=[];
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith('bf-lift-')){
+      try{logs.push({key:k,...JSON.parse(localStorage.getItem(k))});}catch(e){}
+    }
+  }
+  return logs;
+}
+
+function saveWeekToDrive(){
+  const logs = getAllLiftLogs();
+  if(!logs.length){showToast('No lift data logged yet — tap LOG on any exercise first');return;}
+
+  // Build CSV matching Fire Lifting Data: Date,Component,Variation,Set,Reps,Weight,Training Week No.,Comment
+  let csv = 'lifting Date,Component,Variation,Set,Reps,Weight,Training Week No.,Comment\n';
+  logs.forEach(log=>{
+    log.sets.forEach(s=>{
+      if(s.r||s.w){
+        csv += `${log.date},${log.exercise},BehaviorFit Block,${s.s},${s.r},${s.w},${log.weekNo||''},${log.note||''}\n`;
+      }
+    });
+  });
+
+  const today = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const fileName = 'BehaviorFit Lifting Log - '+today+'.csv';
+
+  if(window.cowork&&window.cowork.callMcpTool){
+    showToast('Saving to Google Drive...');
+    window.cowork.callMcpTool('mcp__d53a31a9-ca00-4a2a-9794-2af0662341b9__create_file',{
+      title: fileName,
+      textContent: csv,
+      contentMimeType: 'text/csv'
+    }).then(()=>{
+      showToast('✓ Saved to Google Drive: '+fileName);
+    }).catch(err=>{
+      showToast('Drive error — CSV copied to clipboard instead');
+      navigator.clipboard&&navigator.clipboard.writeText(csv);
+    });
+  } else {
+    // Not in Cowork — copy CSV to clipboard
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(csv).then(()=>showToast('📋 CSV copied! Paste into your lifting spreadsheet.'));
+    } else {
+      prompt('Copy this CSV into your Fire Lifting Data spreadsheet:',csv);
+    }
+  }
+}
+
+// Restore lift badges on load
+function restoreLiftBadges(){
+  document.querySelectorAll('.check-row[data-key]').forEach(row=>{
+    const k=row.dataset.key;
+    if(localStorage.getItem('bf-lift-'+k)&&!row.querySelector('.lift-logged-badge')){
+      const lbl=row.querySelector('.check-lbl');
+      if(lbl) lbl.insertAdjacentHTML('afterend','<span class="lift-logged-badge">✓ Logged</span>');
+    }
+  });
+}
+
+// ── PROGRESS SYNC (copy/paste code across devices) ───────────────────────────
+function showToast(msg){
+  const t=document.createElement('div');
+  t.className='toast';t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(),2800);
+}
+
+function exportProgress(){
+  const state={};
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith('bf-'))state[k]=localStorage.getItem(k);
+  }
+  const code=btoa(JSON.stringify(state));
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).then(()=>showToast('✓ Progress copied — paste it on any device!')).catch(()=>promptCopy(code));
+  } else { promptCopy(code); }
+}
+
+function promptCopy(code){
+  const box=prompt('Copy this code, then paste it on any device using Load Progress:',code);
+}
+
+function importProgress(){
+  const raw=prompt('Paste your progress code:');
+  if(!raw)return;
+  try{
+    const state=JSON.parse(atob(raw.trim()));
+    // Clear old keys
+    const toRemove=[];
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('bf-'))toRemove.push(k);}
+    toRemove.forEach(k=>localStorage.removeItem(k));
+    // Apply new state
+    Object.entries(state).forEach(([k,v])=>localStorage.setItem(k,v));
+    // Update DOM
+    document.querySelectorAll('.check-row[data-key]').forEach(r=>{
+      r.classList.toggle('done',localStorage.getItem(r.dataset.key)==='1');
+    });
+    WEEKS.forEach((_,wi)=>refreshWeek(wi));
+    updateGlobal();
+    showToast('✓ Progress restored!');
+  }catch(e){alert('Invalid code — please try again.');}
+}
+
 buildUI();
 buildCharts();
+restoreLiftBadges();
 </script>
 </body>
 </html>
